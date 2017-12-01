@@ -1,9 +1,11 @@
 <?php
+require_once 'YandexDictionaryApi.php';
 class RestrAdapter{
     private $requestMethod;
     private $authKey;
     private $languageDirection;
     private $text;
+    private $yandexDictionaryApi;
     
     
     
@@ -24,6 +26,9 @@ class RestrAdapter{
          $this->authKey=$getArray['key'];
          $this->languageDirection=$getArray['lang'];
          $this->text=$getArray['text'];
+         $this->yandexDictionaryApi=new YandexDictionaryApi($getArray["key"]);
+         echo "debug yandexapi=";
+         echo $this->yandexDictionaryApi->getApiKeyString();
      }
     
     
