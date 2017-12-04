@@ -8,8 +8,11 @@ class YandexDictionaryApi
     const INVALID_API_KEY = "INVALID_API_KEY";
     const GET_BEST_API_SQL = "SELECT ak_api FROM  api_key WHERE ak_index = (SELECT cj_api_key_index FROM `current_journal`  
 ORDER BY `current_journal`.`cj_request_number` ASC LIMIT 1);";
-    const INVALIDATE_SQL = "INSERT INTO requests_history_journal (rhj_api_key_index,rhj_request_number,rhj_date)
-SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journal";
+    const WRITE_TO_HISTORY_JOUTNAL_SQL = "INSERT INTO requests_history_journal (rhj_api_key_index,rhj_request_number,rhj_date)
+SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journal;";
+    const TRUNCATE_CURRENT_JOURNAL="TRUNCATE current_journal;";
+    const SET_TO_ZERO_CURRENT_JOURNAL_SQL="INSERT IGNORE INTO current_journal (cj_api_key_index,cj_request_number)
+SELECT ak_index,0 FROM api_key;";
 
     private $authKey;
     private $languageDirection;
@@ -20,11 +23,12 @@ SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journa
 
     function __construct()
     {
-        echo "what the fuck!!!!!!";
+        //if invalidating than return and invalidate current journal in database
         if (self::$bIsInvalidating) {
             return false;
         }
 
+        //get params and if they are not initialized throw exception
         $getArray = $_GET;
         if (!isset($getArray['lang']) || !isset($getArray['text'])) {
             throw new Exception("lang and text params not initialized");
@@ -34,14 +38,12 @@ SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journa
         $this->text = $getArray['text'];
         $yandexApi = $getArray['key'];
 
-        echo "isset yandexkey ".isset($yandexApi);
+        //if we don't get yandex dictionary api (for example first time) we should take the optimal api for current request
         if (isset($yandexApi)) {
             $this->authKey = $yandexApi;
         } else {
-            echo "api key setted <br>";
             $this->authKey = $this->getNewApiString();
         }
-        echo "api key setted <br>";
     }
 
     public static function invalidate()
@@ -54,15 +56,18 @@ SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journa
 
     private function invalidateAndSaveInJournal()
     {
-        $invalidateSQl = $this->getSqlWithDate();
         $conn = Database::getExistingDatabaseConnection();
         if ($conn->errno) {
             throw new Exception("problem with sql connection. var_damp=" . var_dump($conn));
         }
-        $result = $conn->query($invalidateSQl);
+
+        //save current journal to history, truncate current journal and set all apis to 0;
+        $invalidateCurrentJournalSql=$this->getSaveToJournalHistorySqlWithDate()." ".self::TRUNCATE_CURRENT_JOURNAL." ".self::SET_TO_ZERO_CURRENT_JOURNAL_SQL;
+        $result = $conn->multi_query($invalidateCurrentJournalSql);
         if ($conn->affected_rows <= 0) {
             LogUtil::sendErrorToServerLog("cannot write result to db. Dump=" + var_dump($result));
         }
+
     }
 
     private function getNewApiString()
@@ -71,14 +76,13 @@ SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journa
         if ($conn->errno) {
             throw new Exception("problem with sql connection. var_damp=" . var_dump($conn));
         }
+
         $result = $conn->query(self::GET_BEST_API_SQL);
         if ($result->num_rows > 0) {
             $apiString = $result->fetch_assoc()["ak_api"];
-            echo "apiString=$apiString";
             return $apiString;
         } else {
             return self::INVALID_API_KEY;
-
         }
     }
 
@@ -96,16 +100,22 @@ SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journa
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1); // return into a variable
         curl_setopt($ch, CURLOPT_TIMEOUT, 4); // times out after 4s
         $result = curl_exec($ch); // run the whole process
+        //get http responce code
         $returnCodeInfo = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
         curl_close($ch);
 
-        echo "code=$returnCodeInfo <br>";
+//        echo "resultcode=$returnCodeInfo <br>";
 
+        //200 means everything is ok, we can save request to db and return result, in header we return api_key which devices can save
+        //for future requests
         if ($returnCodeInfo == 200) {
             $this->increaseApiKeyRequestNumber($this->authKey);
+            header("api_key: $this->authKey");
             echo $result;
+            //if code is 403 it means that api key limit has exceed and we should get new api key
         } elseif ($returnCodeInfo == 403) {
+            //if second attemp to get api key than return error code
             if (!$this->secondAttempt) {
                 $this->secondAttempt = true;
                 $this->authKey = $this->getNewApiString();
@@ -117,6 +127,8 @@ SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journa
             LogUtil::sendErrorToServerLog("api key $this->authKey is not valid =$result");
         } else {
             LogUtil::sendErrorToServerLog("unknown error =$result");
+            http_response_code(406);
+            echo $result;
         }
 
     }
@@ -124,7 +136,6 @@ SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journa
     private function increaseApiKeyRequestNumber($apiKey)
     {
         $conn = Database::getExistingDatabaseConnection();
-        echo "conn->erno= $conn->errno";
         if (!$conn->errno) {
             /* создаем подготавливаемый запрос */
             $stmt = $conn->stmt_init();
@@ -144,9 +155,9 @@ ON DUPLICATE KEY UPDATE cj_request_number=cj_request_number+1")
                 /* выбираем данные из результата */
                 $stmt->fetch();
 
-//                TODO if affected rows <1 then log this
-//                echo "dump insert result: {$district} affected=$conn->affected_rows <br>";
-
+                if ($conn->affected_rows<1){
+                    LogUtil::sendErrorToServerLog("error when insert into db. dump ".var_dump($stmt));
+                }
 
                 /* закрываем запрос */
                 $stmt->close();
@@ -156,11 +167,11 @@ ON DUPLICATE KEY UPDATE cj_request_number=cj_request_number+1")
         }
     }
 
-    private function getSqlWithDate()
+    private function getSaveToJournalHistorySqlWithDate()
     {
+        //replace placeholder {DATEPLACEHOLDER} in sql string with current time in timezone Europe/Kiev
         $date = new DateTime("now", new DateTimeZone('Europe/Kiev'));
-        $returnStr = str_replace("{DATEPLACEHOLDER}", $date->format('Y-m-d'), self::INVALIDATE_SQL);
-//        echo "return string=$returnStr <br>";
+        $returnStr = str_replace("{DATEPLACEHOLDER}", $date->format('Y-m-d'), self::WRITE_TO_HISTORY_JOUTNAL_SQL);
         return $returnStr;
     }
 
