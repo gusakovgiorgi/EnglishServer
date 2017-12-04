@@ -2,37 +2,29 @@
 require_once 'Database.php';
 require_once 'LogUtil.php';
 
-/* INSERT INTO requests_journal (
-rj_api_index,
-      rj_request_number
-)
-SELECT cj_api_key_index,
-       cj_request_number
-FROM current_journal
-on DUPLICATE KEY UPDATE
-rj_request_number=cj_request_number+rj_request_number;
-*/
-
 class YandexDictionaryApi
 {
     const API_URL = "https://dictionary.yandex.net/api/v1/dicservice.json/lookup";
     const INVALID_API_KEY = "INVALID_API_KEY";
     const GET_BEST_API_SQL = "SELECT ak_api FROM  api_key WHERE ak_index = (SELECT cj_api_key_index FROM `current_journal`  
 ORDER BY `current_journal`.`cj_request_number` ASC LIMIT 1);";
-    const INVALIDATE_SQL="";
+    const INVALIDATE_SQL = "INSERT INTO requests_history_journal (rhj_api_key_index,rhj_request_number,rhj_date)
+SELECT cj_api_key_index,cj_request_number, {DATEPLACEHOLDER} FROM current_journal";
 
     private $authKey;
     private $languageDirection;
     private $text;
-    private $secondAttempt=false;
-    private  static $bIsInvalidating;
+    private $secondAttempt = false;
+    private static $bIsInvalidating=false;
 
 
-    function _construct()
+    function __construct()
     {
-        if (self::$bIsInvalidating){
-            return $this->invalidateAndSaveInJournal();
+        echo "what the fuck!!!!!!";
+        if (self::$bIsInvalidating) {
+            return false;
         }
+
         $getArray = $_GET;
         if (!isset($getArray['lang']) || !isset($getArray['text'])) {
             throw new Exception("lang and text params not initialized");
@@ -42,44 +34,47 @@ ORDER BY `current_journal`.`cj_request_number` ASC LIMIT 1);";
         $this->text = $getArray['text'];
         $yandexApi = $getArray['key'];
 
+        echo "isset yandexkey ".isset($yandexApi);
         if (isset($yandexApi)) {
             $this->authKey = $yandexApi;
         } else {
+            echo "api key setted <br>";
             $this->authKey = $this->getNewApiString();
         }
+        echo "api key setted <br>";
     }
 
-    public static function invalidate(){
-        self::$bIsInvalidating=true;
-        $instance=new self();
+    public static function invalidate()
+    {
+        self::$bIsInvalidating = true;
+        $instance = new self();
+        $instance->invalidateAndSaveInJournal();
 
     }
 
-    private function invalidateAndSaveInJournal(){
-        $conn=Database::getExistingDatabaseConnection();
-        if ($conn->errno){
-            throw new Exception("problem with sql connection. var_damp=".var_dump($conn));
+    private function invalidateAndSaveInJournal()
+    {
+        $invalidateSQl = $this->getSqlWithDate();
+        $conn = Database::getExistingDatabaseConnection();
+        if ($conn->errno) {
+            throw new Exception("problem with sql connection. var_damp=" . var_dump($conn));
         }
-        $result = $conn->query(self::GET_BEST_API_SQL);
-        if ($result->num_rows > 0) {
-            $apiString = $result->fetch_assoc()["ak_api"];
-            return $apiString;
-        } else {
-            return self::INVALID_API_KEY;
-
+        $result = $conn->query($invalidateSQl);
+        if ($conn->affected_rows <= 0) {
+            LogUtil::sendErrorToServerLog("cannot write result to db. Dump=" + var_dump($result));
         }
-
     }
 
     private function getNewApiString()
     {
         $conn = Database::getExistingDatabaseConnection();
-        if ($conn->errno){
-            throw new Exception("problem with sql connection. var_damp=".var_dump($conn));
+        if ($conn->errno) {
+            throw new Exception("problem with sql connection. var_damp=" . var_dump($conn));
         }
         $result = $conn->query(self::GET_BEST_API_SQL);
         if ($result->num_rows > 0) {
             $apiString = $result->fetch_assoc()["ak_api"];
+            echo "apiString=$apiString";
             return $apiString;
         } else {
             return self::INVALID_API_KEY;
@@ -110,17 +105,17 @@ ORDER BY `current_journal`.`cj_request_number` ASC LIMIT 1);";
         if ($returnCodeInfo == 200) {
             $this->increaseApiKeyRequestNumber($this->authKey);
             echo $result;
-        }elseif ($returnCodeInfo==403){
-            if (!$this->secondAttempt){
-                $this->secondAttempt=true;
-                $this->authKey=$this->getNewApiString();
+        } elseif ($returnCodeInfo == 403) {
+            if (!$this->secondAttempt) {
+                $this->secondAttempt = true;
+                $this->authKey = $this->getNewApiString();
                 $this->getTranslation();
-            }else{
+            } else {
                 http_response_code(406);
                 echo $result;
             }
             LogUtil::sendErrorToServerLog("api key $this->authKey is not valid =$result");
-        }else{
+        } else {
             LogUtil::sendErrorToServerLog("unknown error =$result");
         }
 
@@ -156,9 +151,17 @@ ON DUPLICATE KEY UPDATE cj_request_number=cj_request_number+1")
                 /* закрываем запрос */
                 $stmt->close();
             }
-        }else{
-            LogUtil::sendErrorToServerLog("get sql connection error. dump=".var_dump($conn));
+        } else {
+            LogUtil::sendErrorToServerLog("get sql connection error. dump=" . var_dump($conn));
         }
+    }
+
+    private function getSqlWithDate()
+    {
+        $date = new DateTime("now", new DateTimeZone('Europe/Kiev'));
+        $returnStr = str_replace("{DATEPLACEHOLDER}", $date->format('Y-m-d'), self::INVALIDATE_SQL);
+//        echo "return string=$returnStr <br>";
+        return $returnStr;
     }
 
 }
