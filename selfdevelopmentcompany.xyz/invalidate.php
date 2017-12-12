@@ -1,5 +1,5 @@
 <?php
-require_once '../YandexDictionaryApi.php';
+require_once '/home/at285851/selfdevelopmentcompany.xyz/YandexDictionaryApi.php';
 /**
  * Created by PhpStorm.
  * User: notbl

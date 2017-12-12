@@ -7,10 +7,9 @@ class RestrAdapter{
     
     
     public function __construct(){
-        //todo change GET method to POST
         $this->requestMethod = $_SERVER['REQUEST_METHOD'];
 
-        if (strnatcasecmp ( $this->requestMethod , "GET")!=0 || !isset($_GET)){
+        if (strnatcasecmp ( $this->requestMethod , "POST")!=0 || !isset($_POST)){
             throw new Exception("invalid request method. dump=".var_dump($this->requestMethod));
         }
 

@@ -29,14 +29,14 @@ SELECT ak_index,0 FROM api_key;";
         }
 
         //get params and if they are not initialized throw exception
-        $getArray = $_GET;
-        if (!isset($getArray['lang']) || !isset($getArray['text'])) {
+        $gparamsArray = $_POST;
+        if (!isset($gparamsArray['lang']) || !isset($gparamsArray['text'])) {
             throw new Exception("lang and text params not initialized");
         }
 
-        $this->languageDirection = $getArray['lang'];
-        $this->text = $getArray['text'];
-        $yandexApi = $getArray['key'];
+        $this->languageDirection = $gparamsArray['lang'];
+        $this->text = $gparamsArray['text'];
+        $yandexApi = $gparamsArray['key'];
 
         //if we don't get yandex dictionary api (for example first time) we should take the optimal api for current request
         if (isset($yandexApi)) {
